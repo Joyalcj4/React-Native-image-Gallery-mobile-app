@@ -9,7 +9,8 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.joyalcj.FlickrGalleryApp"
     },
     "android": {
       "adaptiveIcon": {
@@ -18,12 +19,14 @@
       },
       "package": "com.joyalcj.FlickrGalleryApp",
       "edgeToEdgeEnabled": true,
-      "permissions": ["INTERNET"]
+      "permissions": [
+        "INTERNET"
+      ]
     },
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/icon.png"
     },
     "plugins": [
       "expo-router",
