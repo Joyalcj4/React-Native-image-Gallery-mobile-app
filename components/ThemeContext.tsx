@@ -9,6 +9,7 @@ const lightTheme = {
   border: '#c9ada7',
   shadow: '#22223b',
   icon: '#4a4e69',
+  inactive: '#9a8c98',
 };
 
 const darkTheme = {
@@ -20,6 +21,7 @@ const darkTheme = {
   border: '#4a4e69',
   shadow: '#000',
   icon: '#f2e9e4',
+  inactive: '#9a8c98',
 };
 
 const ThemeContext = createContext({

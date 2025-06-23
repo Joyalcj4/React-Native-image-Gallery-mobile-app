@@ -1,14 +1,18 @@
-import React, { useEffect, useState, useLayoutEffect, useRef } from 'react';
-import { View, FlatList, Image, ActivityIndicator, StyleSheet, RefreshControl, Text, TouchableOpacity, Animated } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, FlatList, Image, ActivityIndicator, StyleSheet, RefreshControl, TouchableOpacity, Animated } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../components/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
+import { Snackbar } from 'react-native-paper';
+import { useFavorites } from '../../components/FavoritesContext';
 
 const API_URL = 'https://api.flickr.com/services/rest/?method=flickr.photos.getRecent&per_page=20&page=1&api_key=6f102c62f41998d151e5a1b48713cf13&format=json&nojsoncallback=1&extras=url_s';
 
 type FlickrImage = {
     id: string;
     url_s: string;
+    secret: string;
+    server: string;
 };
 
 export default function HomeScreen({ navigation }: any) {
@@ -17,11 +21,19 @@ export default function HomeScreen({ navigation }: any) {
     const [refreshing, setRefreshing] = useState(false);
     const { theme, toggleTheme } = useTheme();
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
-    const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
+    const [isImageViewerVisible, setIsImageViewerVisible] = useState(false)
     
-    // Animation values
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const scaleAnim = useRef(new Animated.Value(0.3)).current;
+
+    const [page, setPage] = useState(1);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [snackbarVisible, setSnackbarVisible] = useState(false);
+    const [snackbarMsg, setSnackbarMsg] = useState('');
+    const [retryAction, setRetryAction] = useState<null | (() => void)>(null);
+
+    const { addFavorite, removeFavorite, isFavorite } = useFavorites();
+    const [selectedImageObj, setSelectedImageObj] = useState<FlickrImage | null>(null);
 
     const animateIn = () => {
         Animated.parallel([
@@ -55,7 +67,9 @@ export default function HomeScreen({ navigation }: any) {
     };
 
     const handleImagePress = (imageUrl: string) => {
+        const imgObj = images.find(img => img.url_s === imageUrl) || null;
         setSelectedImage(imageUrl);
+        setSelectedImageObj(imgObj);
         setIsImageViewerVisible(true);
         animateIn();
     };
@@ -67,51 +81,42 @@ export default function HomeScreen({ navigation }: any) {
         });
     };
 
-    useLayoutEffect(() => {
-        navigation.setOptions({
-            headerRight: () => (
-                <TouchableOpacity onPress={toggleTheme} style={{ marginRight: 16 }}>
-                    <Ionicons
-                        name={theme.mode === 'light' ? 'moon' : 'sunny'}
-                        size={24}
-                        color={theme.icon}
-                    />
-                </TouchableOpacity>
-            ),
-            headerStyle: { backgroundColor: theme.background },
-            headerTintColor: theme.text,
-            headerTitleStyle: { color: theme.text },
-        });
-    }, [navigation, theme]);
+    const handleFavoriteToggle = () => {
+        if (selectedImageObj) {
+            isFavorite(selectedImageObj.id)
+                ? removeFavorite(selectedImageObj.id)
+                : addFavorite(selectedImageObj);
+        }
+    };
 
-    const fetchImages = async () => {
+    const fetchImages = async (pageNum = 1, append = false) => {
         try {
-            const res = await fetch(API_URL);
+            const url = `https://api.flickr.com/services/rest/?method=flickr.photos.getRecent&per_page=20&page=${pageNum}&api_key=6f102c62f41998d151e5a1b48713cf13&format=json&nojsoncallback=1&extras=url_s,secret,server`;
+            const res = await fetch(url);
             const json = await res.json();
             const newImages = json.photos.photo;
-
-            const cached = await AsyncStorage.getItem('cachedImages');
-            const cachedData = cached ? JSON.parse(cached) : [];
-
-            const hasChanged = JSON.stringify(cachedData) !== JSON.stringify(newImages);
-            if (hasChanged) {
-                await AsyncStorage.setItem('cachedImages', JSON.stringify(newImages));
-                setImages(newImages);
+            if (append) {
+                setImages(prev => [...prev, ...newImages]);
             } else {
-                setImages(cachedData);
+                setImages(newImages);
             }
+            await AsyncStorage.setItem('cachedImages', JSON.stringify(newImages));
         } catch (err) {
+            setSnackbarMsg('Network error. Please try again.');
+            setSnackbarVisible(true);
+            setRetryAction(() => () => fetchImages(pageNum, append));
             const cached = await AsyncStorage.getItem('cachedImages');
             const cachedData = cached ? JSON.parse(cached) : [];
-            setImages(cachedData);
+            if (!append) setImages(cachedData);
         } finally {
             setLoading(false);
             setRefreshing(false);
+            setLoadingMore(false);
         }
     };
 
     useEffect(() => {
-        fetchImages();
+        fetchImages(1);
     }, []);
 
     const onRefresh = () => {
@@ -119,33 +124,15 @@ export default function HomeScreen({ navigation }: any) {
         fetchImages();
     };
 
-    const Footer = () => (
-        <View style={[styles.footer, { backgroundColor: theme.mode === 'dark' ? 'rgba(34, 34, 59, 0.9)' : 'rgba(242, 233, 228, 0.9)' }]}>
-            <View style={styles.footerContent}>
-                <View style={styles.footerLeft}>
-                    <Text style={[styles.footerText, { color: theme.text }]}>
-                        @JoyalJames
-                    </Text>
-                </View>
-                <View style={styles.footerRight}>
-                    <TouchableOpacity 
-                        style={styles.footerButton}
-                        onPress={onRefresh}
-                    >
-                        <Ionicons 
-                            name="refresh" 
-                            size={20} 
-                            color={theme.text} 
-                            style={styles.footerIcon}
-                        />
-                        <Text style={[styles.footerButtonText, { color: theme.text }]}>
-                            Refresh
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </View>
-    );
+    const loadMore = () => {
+        if (!loadingMore && !loading) {
+            setLoadingMore(true);
+            const nextPage = page + 1;
+            setPage(nextPage);
+            fetchImages(nextPage, true);
+        }
+    };
+
 
     return (
         <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -154,7 +141,7 @@ export default function HomeScreen({ navigation }: any) {
             ) : (
                 <FlatList
                     data={images}
-                    keyExtractor={(item) => item.id}
+                    keyExtractor={(item) => `${item.id}_${item.secret}_${item.server}`}
                     renderItem={({ item }) => (
                         <View style={[styles.imageWrapper, { backgroundColor: theme.card, shadowColor: theme.shadow }]}>
                             <TouchableOpacity onPress={() => handleImagePress(item.url_s)}>
@@ -165,6 +152,9 @@ export default function HomeScreen({ navigation }: any) {
                     numColumns={2}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
                     contentContainerStyle={[styles.list, { paddingBottom: 80 }]}
+                    onEndReached={loadMore}
+                    onEndReachedThreshold={0.5}
+                    ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={theme.accent} /> : null}
                 />
             )}
             {isImageViewerVisible && selectedImage && (
@@ -193,10 +183,29 @@ export default function HomeScreen({ navigation }: any) {
                             source={{ uri: selectedImage }} 
                             style={styles.fullImage}
                         />
+                        {selectedImageObj && (
+                            <TouchableOpacity
+                                style={styles.favoriteBtn}
+                                onPress={handleFavoriteToggle}
+                            >
+                                <Ionicons
+                                    name={isFavorite(selectedImageObj.id) ? 'heart' : 'heart-outline'}
+                                    size={32}
+                                    color={isFavorite(selectedImageObj.id) ? 'red' : '#fff'}
+                                />
+                            </TouchableOpacity>
+                        )}
                     </Animated.View>
                 </Animated.View>
             )}
-            <Footer />
+            <Snackbar
+                visible={snackbarVisible}
+                onDismiss={() => setSnackbarVisible(false)}
+                action={{ label: 'RETRY', onPress: () => { setSnackbarVisible(false); retryAction && retryAction(); } }}
+                duration={3000}
+            >
+                {snackbarMsg}
+            </Snackbar>
         </View>
     );
 }
@@ -207,7 +216,7 @@ const styles = StyleSheet.create({
         paddingTop: 16,
         paddingHorizontal: 8,
     },
-    title: {
+    heading: {
         fontSize: 28,
         fontWeight: 'bold',
         marginBottom: 16,
@@ -303,5 +312,14 @@ const styles = StyleSheet.create({
     },
     footerIcon: {
         marginRight: 4,
+    },
+    favoriteBtn: {
+        position: 'absolute',
+        bottom: 24,
+        right: 24,
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        borderRadius: 24,
+        padding: 10,
+        zIndex: 1001,
     },
 });
